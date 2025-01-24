@@ -1,10 +1,7 @@
-using System.Collections;
-using System.Collections.Generic;
-
 using UnityEngine;
 
 [RequireComponent(typeof(CharacterController))]
-public class CharacterMovement : MonoBehaviour
+public class SimpleCharacterController : MonoBehaviour
 {
     [Header("Movement Settings")]
     public float speed = 6.0f;       // Movement speed
@@ -52,4 +49,3 @@ public class CharacterMovement : MonoBehaviour
         controller.Move(moveDirection * Time.deltaTime);
     }
 }
-
