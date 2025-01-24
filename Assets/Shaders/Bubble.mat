@@ -29,6 +29,6 @@ Material:
     - _FresnelPower: 1.69
     - _Smoothness: 1
     m_Colors:
-    - _BubbleColor: {r: 1, g: 1, b: 1, a: 0.8666667}
-    - _ReflectionTint: {r: 0.5896226, g: 1, b: 0.9779459, a: 0.69803923}
+    - _BubbleColor: {r: 0.7929423, g: 0.9716981, b: 0.95744693, a: 0.8666667}
+    - _ReflectionTint: {r: 0, g: 1, b: 0.9411764, a: 1}
   m_BuildTextureStacks: []
