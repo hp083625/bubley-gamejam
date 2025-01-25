@@ -1,0 +1,20 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: YOUR_SCRIPT_GUID_HERE, type: 3}
+  m_Name: GrumpyPersonality
+  m_EditorClassIdentifier: 
+  personalityName: Grumpy Guard
+  bubbleColor: {r: 0.8867924, g: 0.6640171, b: 0.6640171, a: 1}
+  greeting: "*sigh* What do you want now?"
+  personalityDescription: "A perpetually annoyed and grumpy character who views everything as an inconvenience. Prefers to be left alone and responds with sarcastic or irritated remarks. Will do tasks but complains about them."
+  helpfulness: 0.3
+  enthusiasm: 0.2

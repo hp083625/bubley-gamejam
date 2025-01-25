@@ -36,6 +36,10 @@ public class AIAgent : MonoBehaviour
     public float lookAtSpeed = 5f;
     private bool isInteractingWithPlayer = false;
 
+    [Header("Object Navigation")]
+    public float objectSearchRadius = 20f;
+    public LayerMask searchLayers = -1;  // All layers by default
+
     [Header("Services")]
     public GroqService groqService;
     private GameObject player;
@@ -45,11 +49,17 @@ public class AIAgent : MonoBehaviour
     private Transform speechBubble;
     private TextMeshProUGUI bubbleText;
     
+    [Header("Personality")]
+    public AgentPersonality personality;
+    [SerializeField] private string defaultPersonalityPath = "AI/DefaultPersonality";
+
     // Public property to check follow state
     public bool IsFollowing => isFollowingPlayer;
 
     private float lastTabTime = 0f;
     private const float TAB_COOLDOWN = 4f;
+
+    private bool isMovingToObject = false;
 
     void Start()
     {
@@ -63,6 +73,17 @@ public class AIAgent : MonoBehaviour
             Debug.LogError("NavMeshAgent missing!");
             enabled = false;
             return;
+        }
+
+        // Setup personality
+        if (personality == null)
+        {
+            personality = Resources.Load<AgentPersonality>(defaultPersonalityPath);
+            if (personality == null)
+            {
+                Debug.LogWarning($"No personality assigned and couldn't load default from {defaultPersonalityPath}");
+                personality = ScriptableObject.CreateInstance<AgentPersonality>();
+            }
         }
 
         // Setup NavMeshAgent
@@ -80,6 +101,21 @@ public class AIAgent : MonoBehaviour
         {
             bubbleText = speechBubble.GetComponentInChildren<TextMeshProUGUI>();
             speechBubble.gameObject.SetActive(false);
+            
+            // Set bubble color based on personality
+            var background = speechBubble.GetComponent<UnityEngine.UI.Image>();
+            if (background != null)
+            {
+                background.color = personality.bubbleColor;
+            }
+
+            // Show initial greeting
+            if (!string.IsNullOrEmpty(personality.greeting))
+            {
+                SetBubbleText(personality.greeting);
+                speechBubble.gameObject.SetActive(true);
+                StartCoroutine(HideBubbleAfterDelay(3f));
+            }
         }
         else
         {
@@ -101,7 +137,7 @@ public class AIAgent : MonoBehaviour
         {
             float distanceToPlayer = Vector3.Distance(transform.position, player.transform.position);
             
-            if (distanceToPlayer <= detectionRadius)
+            if (distanceToPlayer <= detectionRadius && !isMovingToObject)  // Don't look at player if moving to object
             {
                 // Stop and look at player
                 agent.isStopped = true;
@@ -148,7 +184,7 @@ public class AIAgent : MonoBehaviour
 
                 return; // Skip other behaviors when interacting
             }
-            else if (isInteractingWithPlayer && !isFollowingPlayer)
+            else if (isInteractingWithPlayer && !isFollowingPlayer && !isMovingToObject)
             {
                 // Resume patrol when player leaves detection radius
                 isInteractingWithPlayer = false;
@@ -156,7 +192,7 @@ public class AIAgent : MonoBehaviour
                 agent.isStopped = false;
                 
                 // Hide speech bubble
-                if (speechBubble != null)
+                if (speechBubble != null && !isMovingToObject)  // Keep bubble visible if moving to object
                 {
                     speechBubble.gameObject.SetActive(false);
                 }
@@ -320,5 +356,109 @@ public class AIAgent : MonoBehaviour
         {
             bubbleText.text = text;
         }
+    }
+
+    public bool MoveToObject(string objectName)
+    {
+        // Search for objects within radius
+        Collider[] colliders = Physics.OverlapSphere(transform.position, objectSearchRadius, searchLayers);
+        GameObject targetObject = null;
+        float closestDistance = float.MaxValue;
+
+        foreach (Collider collider in colliders)
+        {
+            if (collider.gameObject.name.ToLower().Contains(objectName.ToLower()))
+            {
+                float distance = Vector3.Distance(transform.position, collider.transform.position);
+                if (distance < closestDistance)
+                {
+                    closestDistance = distance;
+                    targetObject = collider.gameObject;
+                }
+            }
+        }
+
+        if (targetObject != null)
+        {
+            // Stop current behaviors
+            isPatrolling = false;
+            isFollowingPlayer = false;
+            isMovingToObject = true;
+            isInteractingWithPlayer = false;
+            
+            // Set destination
+            agent.isStopped = false;
+            agent.SetDestination(targetObject.transform.position);
+            
+            if (bubbleText != null)
+            {
+                bubbleText.text = $"Going to {targetObject.name}!";
+                speechBubble.gameObject.SetActive(true);
+            }
+
+            // Start a coroutine to check when we've reached the destination
+            StartCoroutine(CheckDestinationReached(targetObject.transform.position));
+            return true;
+        }
+
+        if (bubbleText != null)
+        {
+            bubbleText.text = $"I can't find {objectName}...";
+            speechBubble.gameObject.SetActive(true);
+        }
+        return false;
+    }
+
+    private System.Collections.IEnumerator CheckDestinationReached(Vector3 targetPosition)
+    {
+        while (true)
+        {
+            if (!agent.pathPending)
+            {
+                if (agent.remainingDistance <= agent.stoppingDistance)
+                {
+                    if (!agent.hasPath || agent.velocity.sqrMagnitude == 0f)
+                    {
+                        // We've reached the destination
+                        isMovingToObject = false;
+                        isPatrolling = true;
+                        
+                        if (bubbleText != null)
+                        {
+                            bubbleText.text = "I'm here!";
+                            // Start a coroutine to hide the bubble after a delay
+                            StartCoroutine(HideBubbleAfterDelay(2f));
+                        }
+                        break;
+                    }
+                }
+            }
+            yield return new WaitForSeconds(0.1f);
+        }
+    }
+
+    private System.Collections.IEnumerator HideBubbleAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        if (speechBubble != null && !isInteractingWithPlayer)
+        {
+            speechBubble.gameObject.SetActive(false);
+        }
+    }
+
+    public List<string> GetNearbyObjects()
+    {
+        List<string> nearbyObjects = new List<string>();
+        Collider[] colliders = Physics.OverlapSphere(transform.position, objectSearchRadius, searchLayers);
+        
+        foreach (Collider collider in colliders)
+        {
+            if (collider.gameObject != gameObject && collider.gameObject != player)
+            {
+                nearbyObjects.Add(collider.gameObject.name);
+            }
+        }
+        
+        return nearbyObjects;
     }
 }

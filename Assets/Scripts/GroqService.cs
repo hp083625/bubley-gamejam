@@ -13,7 +13,9 @@ public class GroqService : MonoBehaviour
     private const string GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
     private string apiKey;
     private readonly HttpClient client = new HttpClient();
-    private List<Message> messageHistory = new List<Message>();
+    
+    // Dictionary to store message history for each agent
+    private Dictionary<string, List<Message>> agentMessageHistories = new Dictionary<string, List<Message>>();
     private const int MAX_HISTORY = 10;
 
     [System.Serializable]
@@ -99,6 +101,12 @@ public class GroqService : MonoBehaviour
         public string finish_reason;
     }
 
+    [System.Serializable]
+    private class ObjectParameters
+    {
+        public string objectName;
+    }
+
     void Start()
     {
         apiKey = "";
@@ -111,28 +119,28 @@ public class GroqService : MonoBehaviour
 
         Debug.Log("[GroqService] Initializing with API key length: " + apiKey.Length);
         client.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-        // Add system message to history
-        messageHistory.Add(new Message("system", 
-            "You are a friendly AI assistant in a game. You're eager to help and follow the player. " +
-            "Use the toggle_follow function when the player asks you to follow. " +
-            "Keep responses short (under 50 characters) and cheerful. " +
-            "Show enthusiasm for all requests and interactions."
-        ));
-        Debug.Log("[GroqService] System message added to history");
     }
 
-    public void ClearHistory()
+    public void InitializeAgent(string agentId, AgentPersonality personality)
     {
-        messageHistory.Clear();
-        // Re-add system message
-        messageHistory.Add(new Message("system", 
-            "You are a friendly AI assistant in a game. You're eager to help and follow the player. " +
-            "Use the toggle_follow function when the player asks you to follow. " +
-            "Keep responses short (under 50 characters) and cheerful. " +
-            "Show enthusiasm for all requests and interactions."
-        ));
-        Debug.Log("[GroqService] History cleared and system message re-added");
+        if (!agentMessageHistories.ContainsKey(agentId))
+        {
+            var history = new List<Message>();
+            history.Add(new Message("system", personality.GetSystemPrompt()));
+            agentMessageHistories[agentId] = history;
+            Debug.Log($"[GroqService] Initialized agent {agentId} with personality {personality.personalityName}");
+        }
+    }
+
+    public void ClearHistory(string agentId, AgentPersonality personality)
+    {
+        if (agentMessageHistories.ContainsKey(agentId))
+        {
+            var history = new List<Message>();
+            history.Add(new Message("system", personality.GetSystemPrompt()));
+            agentMessageHistories[agentId] = history;
+            Debug.Log($"[GroqService] Cleared history for agent {agentId}");
+        }
     }
 
     private string SerializeRequest(ChatRequest request)
@@ -174,7 +182,15 @@ public class GroqService : MonoBehaviour
 
     public async Task<string> SendMessage(string userMessage, AIAgent agent)
     {
-        Debug.Log($"[GroqService] Sending message: {userMessage}");
+        string agentId = agent.gameObject.GetInstanceID().ToString();
+        Debug.Log($"[GroqService] Sending message to agent {agentId}: {userMessage}");
+        
+        // Initialize agent if not already done
+        if (!agentMessageHistories.ContainsKey(agentId))
+        {
+            InitializeAgent(agentId, agent.personality);
+        }
+
         try
         {
             var tools = new List<Tool>
@@ -187,12 +203,34 @@ public class GroqService : MonoBehaviour
                         description = "Toggle the AI's follow mode on/off",
                         parameters = new { type = "object", properties = new { } }
                     }
+                },
+                new Tool
+                {
+                    function = new Function
+                    {
+                        name = "move_to_object",
+                        description = "Make the AI move to a specific object in the game",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                objectName = new
+                                {
+                                    type = "string",
+                                    description = "The name of the object to move to"
+                                }
+                            },
+                            required = new[] { "objectName" }
+                        }
+                    }
                 }
             };
 
             // Add user message to history
+            var messageHistory = agentMessageHistories[agentId];
             messageHistory.Add(new Message("user", userMessage));
-            Debug.Log($"[GroqService] Added user message to history. Total messages: {messageHistory.Count}");
+            Debug.Log($"[GroqService] Added user message to history for agent {agentId}. Total messages: {messageHistory.Count}");
 
             // Trim history if too long
             while (messageHistory.Count > MAX_HISTORY)
@@ -212,10 +250,7 @@ public class GroqService : MonoBehaviour
                 max_tokens = 1024
             };
 
-            var jsonRequest = JsonConvert.SerializeObject(request, new JsonSerializerSettings 
-            { 
-                NullValueHandling = NullValueHandling.Ignore 
-            });
+            var jsonRequest = SerializeRequest(request);
             Debug.Log($"[GroqService] Sending request to Groq API: {jsonRequest}");
 
             var content = new StringContent(jsonRequest, Encoding.UTF8, "application/json");
@@ -254,18 +289,24 @@ public class GroqService : MonoBehaviour
                         string functionName = toolCall.function.name;
                         Debug.Log($"[GroqService] Tool call: {functionName}");
                         
-                        // Handle both formats: <function=toggle_follow> and toggle_follow
-                        if (functionName.Contains("toggle_follow") || 
-                            functionName.Contains("=toggle_follow"))
+                        if (functionName.Contains("toggle_follow"))
                         {
                             Debug.Log("[GroqService] Toggling follow mode");
                             agent.ToggleFollowMode();
                             
-                            // Find and disable ChatUI
                             var chatUI = FindObjectOfType<ChatUI>();
                             if (chatUI != null)
                             {
                                 chatUI.HideChat();
+                            }
+                        }
+                        else if (functionName == "move_to_object")
+                        {
+                            var parameters = JsonConvert.DeserializeObject<ObjectParameters>(toolCall.function.arguments);
+                            if (parameters != null && !string.IsNullOrEmpty(parameters.objectName))
+                            {
+                                Debug.Log($"[GroqService] Moving to object: {parameters.objectName}");
+                                agent.MoveToObject(parameters.objectName);
                             }
                         }
                     }
@@ -285,21 +326,30 @@ public class GroqService : MonoBehaviour
     }
 
     // Get the last N messages for display
-    public List<(string role, string content)> GetLastMessages(int count)
+    public List<(string role, string content)> GetLastMessages(string agentId, int count)
     {
-        var messages = new List<(string role, string content)>();
-        int start = Mathf.Max(1, messageHistory.Count - count); // Skip system message
-        
-        for (int i = start; i < messageHistory.Count; i++)
+        if (agentMessageHistories.ContainsKey(agentId))
         {
-            var msg = messageHistory[i];
-            if (msg.role != "system") // Skip system messages
+            var messages = new List<(string role, string content)>();
+            var messageHistory = agentMessageHistories[agentId];
+            int start = Mathf.Max(1, messageHistory.Count - count); // Skip system message
+            
+            for (int i = start; i < messageHistory.Count; i++)
             {
-                messages.Add((msg.role, msg.content));
+                var msg = messageHistory[i];
+                if (msg.role != "system") // Skip system messages
+                {
+                    messages.Add((msg.role, msg.content));
+                }
             }
+            
+            Debug.Log($"[GroqService] Retrieved last {messages.Count} messages for agent {agentId}");
+            return messages;
         }
-        
-        Debug.Log($"[GroqService] Retrieved last {messages.Count} messages");
-        return messages;
+        else
+        {
+            Debug.LogError($"[GroqService] Agent {agentId} not found");
+            return new List<(string role, string content)>();
+        }
     }
 }
